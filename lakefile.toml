@@ -1,0 +1,10 @@
+name = "x3dh"
+version = "0.1.0"
+defaultTargets = ["x3dh"]
+
+[[lean_lib]]
+name = "X3dh"
+
+[[lean_exe]]
+name = "x3dh"
+root = "Main"
