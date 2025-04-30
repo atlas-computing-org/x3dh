@@ -12,5 +12,8 @@
   cryptographic reasoning in the Maude-NRL protocol analyzer. In
   Proc. 2nd International Workshop on Security and Rewriting
   Techniques (SecReT 2007), 2007
-
+  https://personales.upv.es/sanesro/papers/EscMeaMes-SecReT07.pdf
+  
 - https://www.coursera.org/learn/crypto
+
+
