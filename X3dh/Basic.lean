@@ -13,6 +13,11 @@ inductive Curve
   | x448
   deriving BEq, Repr
 
+instance : ToString Curve where
+  toString : Curve → String
+  | Curve.x25519 => "Curve.x25519"
+  | Curve.x448 => "Curve.x448"
+
 /-- Hash function selection -/
 inductive HashFunction
   | sha256
@@ -26,24 +31,33 @@ structure Parameters where
   info : String
   deriving BEq, Repr
 
+
 /-- Public key wrapper -/
 structure PublicKey where
   curve : Curve
   bytes : ByteArray
-  deriving Repr
-
-
 
 instance : BEq PublicKey where
   beq (a b : PublicKey) : Bool :=
-    a.curve == b.curve
+    a.curve == b.curve ∧ a.bytes.toList == b.bytes.toList
 
+instance : Repr PublicKey where
+  reprPrec (pk : PublicKey) _ :=
+    s!"PublicKey(curve: {pk.curve}, bytes: {pk.bytes.toList})"
 
 /-- Private key wrapper -/
 structure PrivateKey where
   curve : Curve
   bytes : ByteArray
-  deriving BEq, Repr
+
+instance : BEq PrivateKey where
+  beq (a b : PrivateKey) : Bool :=
+    a.curve == b.curve ∧ a.bytes.toList == b.bytes.toList
+
+instance : Repr PrivateKey where
+  reprPrec (pk : PrivateKey) _ :=
+    s!"PublicKey(curve: {pk.curve}, bytes: {pk.bytes.toList})"
+
 
 /-- Key pair combining public and private components -/
 structure KeyPair where
@@ -215,44 +229,46 @@ def receiveInitialMessage (
 
 end X3DH
 
+open X3DH in
 /-- Example usage of the X3DH protocol -/
 def exampleUsage : IO Unit := do
-  let params := X3DH.Parameters.mk X3DH.Curve.x25519 X3DH.HashFunction.sha512 "MyProtocol"
+  let params : Parameters :=
+    ⟨X3DH.Curve.x25519, X3DH.HashFunction.sha512, "MyProtocol"⟩
 
   -- Alice's identity key
-  let aliceIdKeyPair := X3DH.KeyPair.mk
-    (X3DH.PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x01)))
-    (X3DH.PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x02)))
+  let aliceIdKeyPair := KeyPair.mk
+    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x01)))
+    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x02)))
 
   -- Bob's identity key
-  let bobIdKeyPair := X3DH.KeyPair.mk
-    (X3DH.PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x03)))
-    (X3DH.PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x04)))
+  let bobIdKeyPair := KeyPair.mk
+    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x03)))
+    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x04)))
 
   -- Bob's signed prekey
-  let bobSignedPrekeyPair := X3DH.KeyPair.mk
-    (X3DH.PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x05)))
-    (X3DH.PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x06)))
+  let bobSignedPrekeyPair := KeyPair.mk
+    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x05)))
+    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x06)))
 
   -- Bob's one-time prekey
-  let bobOneTimePrekeyPair := X3DH.KeyPair.mk
-    (X3DH.PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x07)))
-    (X3DH.PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x08)))
+  let bobOneTimePrekeyPair := KeyPair.mk
+    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x07)))
+    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x08)))
 
   -- Bob generates prekey bundle
-  let prekeyBundle := X3DH.generatePrekeyBundle params bobIdKeyPair bobSignedPrekeyPair [bobOneTimePrekeyPair]
+  let prekeyBundle := generatePrekeyBundle params bobIdKeyPair bobSignedPrekeyPair [bobOneTimePrekeyPair]
   IO.println s!"Bob's prekey bundle: {prekeyBundle}"
 
   -- Alice sends initial message
   let initialData := ByteArray.mk #[0x48, 0x65, 0x6C, 0x6C, 0x6F] -- "Hello"
-  match X3DH.sendInitialMessage params aliceIdKeyPair prekeyBundle initialData with
+  match sendInitialMessage params aliceIdKeyPair prekeyBundle initialData with
   | none => IO.println "Failed to send initial message"
   | some (initialMessage, aliceSK) =>
       IO.println s!"Alice sent initial message: {initialMessage}"
       IO.println s!"Alice derived shared key: {aliceSK}"
 
       -- Bob receives initial message
-      match X3DH.receiveInitialMessage params bobIdKeyPair bobSignedPrekeyPair (some bobOneTimePrekeyPair) initialMessage with
+      match receiveInitialMessage params bobIdKeyPair bobSignedPrekeyPair (some bobOneTimePrekeyPair) initialMessage with
       | none => IO.println "Bob failed to process initial message"
       | some bobSK =>
           IO.println s!"Bob derived shared key: {bobSK}"

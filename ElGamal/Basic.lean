@@ -6,7 +6,6 @@ def randInRange (lo hi : Nat) : IO Nat := do
   let g ← IO.rand lo hi
   pure g
 
-
 -- representa um grupo cíclico finito com operação multiplicativa
 
 structure Group where
