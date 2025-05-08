@@ -1,4 +1,7 @@
 
+-- Registry of agent identities and key pairs
+abbrev AgentName := String
+
 -- Define a simple abstract type for keys
 structure KeyPair where
   privateKey : String
@@ -7,66 +10,112 @@ structure KeyPair where
 
 structure Signature where
   message : String
-  signer  : String -- the private key used
+  signer : AgentName
   deriving Repr, BEq
 
-
--- Simulate key pair generation (in real crypto, this would be from random bytes)
-def generateKeyPair (name : String) : KeyPair := {
-    privateKey := name ++ "_priv",
-    publicKey  := name ++ "_pub"
-  }
-
--- Sign a message (public key) with a private key
-def sign (message : String) (privateKey : String) : Signature :=
-  { message := message, signer := privateKey }
-
--- Define Bob's keys
-structure BobKeys where
-  IK  : KeyPair
-  SPK : KeyPair
-  SPKSignature : Signature
-  OPKs : List KeyPair
-  deriving Repr
-
--- Generate Bob's full key bundle
-def generateBobKeys : BobKeys :=
-  let IK  := generateKeyPair "IK_B"
-  let SPK := generateKeyPair "SPK_B"
-  let sig := sign SPK.publicKey IK.privateKey
-  let OPKs := (List.range 5).map (fun i => generateKeyPair s!"OPK_B_{i}")
-  { IK := IK, SPK := SPK, SPKSignature := sig, OPKs := OPKs }
-
--- Example usage
-#eval generateBobKeys
-
--- Verify a signature given the public key
--- (check it was signed by matching private)
-def verify (sig : Signature) (message : String)
-  (expectedPubKey : String) : Bool :=
-  sig.message = message && sig.signer = "IK_B_priv" && expectedPubKey = "IK_B_pub"
-
--- Simulate Alice fetching Bob's key bundle from the server
-structure BobPublicBundle where
-  IK_B  : String
-  SPK_B : String
+-- The agent's full internal state
+structure Agent where
+  name          : AgentName
+  IK            : KeyPair
+  SPK           : KeyPair
   SPK_Signature : Signature
-  OPK_B : Option String
+  OPKs          : List KeyPair
   deriving Repr
 
--- Example: Alice receives this from the server
-def bobBundleFromServer : BobPublicBundle :=
-  let bobKeys := generateBobKeys
-  {
-    IK_B := bobKeys.IK.publicKey,
-    SPK_B := bobKeys.SPK.publicKey,
-    SPK_Signature := bobKeys.SPKSignature,
-    OPK_B := bobKeys.OPKs.head?.map (·.publicKey)
+abbrev AgentRegistry := List Agent
+
+def generateKeyPair (label : String) : KeyPair :=
+  { privateKey := label ++ "_priv", publicKey := label ++ "_pub" }
+
+-- Register a new agent
+def createAgent (reg : AgentRegistry) (name : AgentName) : AgentRegistry :=
+  let IK := generateKeyPair (name ++ "_IK")
+  let SPK := generateKeyPair (name ++ "_SPK")
+  let sig := { message := SPK.publicKey, signer := name : Signature }
+  let OPKs := (List.range 5).map (λ i => generateKeyPair (s!"{name}_OPK_{i}"))
+  Agent.mk name IK SPK sig OPKs :: reg
+
+-- Get an agent by name
+def getAgent? (reg : AgentRegistry) (name : AgentName) : Option Agent :=
+  reg.find? (·.name = name)
+
+
+-- Signature verification
+def verify (reg : AgentRegistry)
+  (sig : Signature) (message : String) (expectedPub : String) : Bool :=
+  match getAgent? reg sig.signer with
+  | some agent => sig.message = message && agent.IK.publicKey = expectedPub
+  | none => false
+
+-- Public bundle (what Alice fetches)
+structure PublicBundle where
+  IK    : String
+  SPK   : String
+  SPK_Signature : Signature
+  OPK   : Option String
+  deriving Repr
+
+def toPublicBundle (agent : Agent) : PublicBundle :=
+ {
+    IK := agent.IK.publicKey,
+    SPK := agent.SPK.publicKey,
+    SPK_Signature := agent.SPK_Signature,
+    OPK := agent.OPKs.head?.map (·.publicKey)
   }
 
--- Alice verifies Bob's signed prekey
-def aliceVerifiesSPK (bundle : BobPublicBundle) : Bool :=
-  verify bundle.SPK_Signature bundle.SPK_B bundle.IK_B
+-- Simulate Diffie-Hellman: fake DH between priv and pub key
+def dh (priv : String) (pub : String) : String :=
+  s!"DH({priv},{pub})"
 
--- Run Alice's verification
-#eval aliceVerifiesSPK bobBundleFromServer
+-- Fake key derivation function
+def kdf (inputs : List String) : String :=
+  s!"KDF({String.intercalate " || " inputs}"
+
+-- Alice computes shared secret from her ephemeral key and Bob's bundle
+def deriveSharedSecret (alice : Agent) (bobBundle : PublicBundle)
+ : String :=
+  let EK_A := generateKeyPair "Alice_EK"
+  let DH1 := dh alice.IK.privateKey bobBundle.SPK
+  let DH2 := dh EK_A.privateKey bobBundle.IK
+  let DH3 := dh EK_A.privateKey bobBundle.SPK
+  let DHs :=
+    match bobBundle.OPK with
+    | some opk => [DH1, DH2, DH3, dh EK_A.privateKey opk]
+    | none     => [DH1, DH2, DH3]
+  kdf DHs
+
+
+-- Simulate Step 3
+def simulateStep3 : String :=
+  let reg0 := []
+  let reg1 := createAgent reg0 "Alice"
+  let reg2 := createAgent reg1 "Bob"
+  let alice := getAgent? reg2 "Alice"
+  let bob := getAgent? reg2 "Bob"
+  match (alice, bob) with
+  | (some a, some b) =>
+      let bundle := toPublicBundle b
+      if verify reg2 bundle.SPK_Signature bundle.SPK bundle.IK then
+        deriveSharedSecret a bundle
+      else "Invalid SPK signature"
+  | _ => "Missing agent"
+
+#eval simulateStep3
+
+
+-- Full simulation
+def simulate : Bool :=
+
+  let reg0 := []
+  let reg1 := createAgent reg0 "Alice"
+  let reg2 := createAgent reg1 "Bob"
+
+  -- Alice retrieves Bob bundle
+  match getAgent? reg2 "Bob" with
+  | some bob =>
+      let bundle := toPublicBundle bob
+      aliceVerifies reg2 bundle
+  | none => false
+
+
+#eval simulate
