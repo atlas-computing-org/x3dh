@@ -66,12 +66,12 @@ def toPublicBundle (agent : Agent) : Bundle :=
     OPK := agent.OPKs.head?.map (·.publicKey)
   }
 
-def toPrivateBundle (agent : Agent) : Bundle :=
+def toPrivateBundle (agent : Agent) (opkUsed : Option Nat) : Bundle :=
  {
     IK := agent.IK.privateKey,
     SPK := agent.SPK.privateKey,
     SPK_Signature := { message := "dummy1" , signer := "dummy2"},
-    OPK := agent.OPKs.head?.map (·.privateKey)
+    OPK := opkUsed.bind (fun idx => agent.OPKs[idx]?.map (·.privateKey))
   }
 
 
@@ -182,10 +182,7 @@ def simulateStep5 (r : AgentRegistry)
       let ikpub := msg.senderIK
       let ekpub := msg.senderEK
 
-      let opkUsed :=
-        msg.opkUsed.bind (fun idx => bob.OPKs[idx]? |>.map (·.privateKey))
-
-      let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob)
+      let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
 
       let ad := deriveAssociatedData ikpub bob.IK.publicKey
 
