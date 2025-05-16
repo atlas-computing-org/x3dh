@@ -167,6 +167,7 @@ def makeMessage (alice : Agent) (EK_A : KeyPair)
   }
 
 
+
 def agentsRegistry :=
   Registry.mk [createAgent "Alice", createAgent "Bob"]
 
@@ -194,7 +195,7 @@ def simulateStep4 (r : Registry) : Except String Message :=
 
       let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
       let plaintext := "Hello Bob!"
-      let ciphertext := encrypt sk ad plaintext
+      let ciphertext := encrypt plaintext sk ad
 
       -- Alice sent the message
       let msg := makeMessage a EK_A opkUsedIdx ciphertext
@@ -204,7 +205,7 @@ def simulateStep4 (r : Registry) : Except String Message :=
   | _ => Except.error "didnt find agents"
 
 
-def simulateStep5 (r : AgentRegistry)
+def simulateStep5 (r : Registry)
   (msg : Message) : Except String String :=
   match getAgent? r "Bob" with
   | some bob =>
@@ -215,11 +216,13 @@ def simulateStep5 (r : AgentRegistry)
 
       let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
 
-      let ad := AssociatedData.mk ikpub bob.IK.publicKey
+      let ad := ByteSequence.ad
+        (ByteSequence.encode ikpub)
+        (ByteSequence.encode bob.IK.publicKey)
 
-      let plaintext := aeadDecrypt sk ad msg.initialCiphertext
-
-      Except.ok plaintext
+      match decrypt sk ad msg with
+      | some s => Except.ok s
+      | none => Except.error "not decrypted"
 
   | none => Except.error "Bob not found"
 
