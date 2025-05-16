@@ -5,6 +5,13 @@ defaultTargets = ["x3dh"]
 [[lean_lib]]
 name = "X3dh"
 
+[[lean_lib]]
+name = "Util"
+
 [[lean_exe]]
 name = "x3dh"
 root = "Main"
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"

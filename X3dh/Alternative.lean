@@ -1,20 +1,60 @@
-
+import Mathlib.Tactic
 
 namespace X3DH
 
 -- Registry of agent identities and key pairs
 abbrev AgentName := String
 
--- Define a simple abstract type for keys
-structure KeyPair where
-  privateKey : String
-  publicKey  : String
-  deriving Repr
+inductive Kind where
+ | pub : Kind
+ | prv : Kind
+ | sec : Kind
+deriving Repr, DecidableEq
 
-structure Signature where
-  message : String
-  signer : AgentName
-  deriving Repr, BEq
+instance : ToString Kind where
+  toString k :=
+   match k with
+   | .pub => "public"
+   | .prv => "private"
+   | .sec => "secret"
+
+def Kind.rev : Kind → Kind
+| .pub => .prv
+| .prv => .pub
+| .sec => .sec
+
+-- a structure to hold a Key
+structure Key where
+  userName : String
+  label : String
+  kind : Kind
+ deriving Repr, DecidableEq
+
+instance : ToString Key where
+  toString k := s!"{k.userName}_{k.label}_{k.kind}"
+
+def match_key (k1 k2 : Key) : Bool :=
+  k1.kind.rev = k2.kind
+  ∧ k1.userName = k2.userName
+  ∧ k1.label = k2.label
+
+
+inductive ByteSequence where
+ | encode : Key → ByteSequence
+ | dh     : Key → Key → ByteSequence
+ | append : ByteSequence → ByteSequence → ByteSequence
+ | sig    : Key → ByteSequence → ByteSequence
+ | ad     : ByteSequence → ByteSequence → ByteSequence
+ | aead   : String → ByteSequence → ByteSequence → ByteSequence
+ deriving Repr, DecidableEq
+
+
+-- Define a simple abstract type for a Key Pair
+structure KeyPair where
+  privateKey : Key
+  publicKey  : Key
+ deriving Repr
+
 
 -- The agent's full internal state
 structure Agent where
@@ -24,47 +64,49 @@ structure Agent where
   OPKs          : List KeyPair
   deriving Repr
 
-abbrev AgentRegistry := List Agent
+def generateKeyPair (name : AgentName) (label : String) : KeyPair :=
+  { privateKey := Key.mk name label Kind.prv,
+    publicKey := Key.mk name label Kind.pub }
 
-def generateKeyPair (label : String) : KeyPair :=
-  { privateKey := label ++ "_priv", publicKey := label ++ "_pub" }
+structure Registry where
+  agents : List Agent
 
--- Register a new agent
-def createAgent (reg : AgentRegistry) (name : AgentName) : AgentRegistry :=
-  let IK := generateKeyPair (name ++ "_IK")
-  let SPK := generateKeyPair (name ++ "_SPK")
-  let OPKs := (List.range 5).map (λ i => generateKeyPair (s!"{name}_OPK_{i}"))
-  Agent.mk name IK SPK OPKs :: reg
+-- create a new agent
+def createAgent (name : AgentName) : Agent :=
+  let IK := generateKeyPair name "IK"
+  let SPK := generateKeyPair name "SPK"
+  let OPKs := (List.range 5).map (λ i => generateKeyPair name s!"OPK{i}")
+  Agent.mk name IK SPK OPKs
 
--- Get an agent by name
-def getAgent? (reg : AgentRegistry) (name : AgentName) : Option Agent :=
-  reg.find? (·.name = name)
+-- find an agent by name
+def getAgent? (reg : Registry) (name : AgentName) : Option Agent :=
+  reg.agents.find? (·.name = name)
 
-
--- Signature verification
-def verify (reg : AgentRegistry)
-  (sig : Signature) (message : String) (expectedPub : String) : Bool :=
-  match getAgent? reg sig.signer with
-  | some agent => sig.message = message && agent.IK.publicKey = expectedPub
-  | none => false
-
--- Public bundle
+-- a bundle of public or private keys and signature
 structure Bundle where
-  IK    : String
-  SPK   : String
-  SPK_Signature : Signature
-  OPK   : Option String
+  IK    : Key
+  SPK   : Key
+  SPK_Signature : ByteSequence
+  OPK   : Option Key
   deriving Repr
 
+-- signature verification
+def verify (b : Bundle) : Bool :=
+  match b.SPK_Signature with
+  | ByteSequence.sig privK enc =>
+    match enc with
+    | ByteSequence.encode s => match_key privK b.IK ∧ s = b.SPK
+    | _ => False
+  | _ => False
+
+
 def toPublicBundle (agent : Agent) : Bundle :=
- {
-    IK := agent.IK.publicKey,
-    SPK := agent.SPK.publicKey,
-    SPK_Signature := {
-      message := agent.SPK.publicKey,
-      signer := agent.name : Signature },
-    OPK := agent.OPKs.head?.map (·.publicKey)
-  }
+ { IK := agent.IK.publicKey,
+   SPK := agent.SPK.publicKey,
+   SPK_Signature := ByteSequence.sig
+    agent.IK.privateKey (ByteSequence.encode agent.SPK.publicKey),
+   OPK := agent.OPKs.head?.map (·.publicKey)
+ }
 
 def toPrivateBundle (agent : Agent) (opkUsed : Option Nat) : Bundle :=
  {
@@ -75,37 +117,24 @@ def toPrivateBundle (agent : Agent) (opkUsed : Option Nat) : Bundle :=
   }
 
 
--- Fake Diffie-Hellman between priv and pub key
-def dh (seq : Nat) (priv : String) (pub : String) : String :=
-  s!"DH{seq}({priv},{pub})"
-
--- Fake key derivation function
-def kdf (inputs : List String) : String :=
-  s!"KDF({String.intercalate " || " inputs})"
-
 -- Alice computes shared secret from her ephemeral key and Bob's bundle
-def deriveSharedSecret (ik : String) (ek : String) (bundle : Bundle)
- : String :=
-  let DH1 := dh 1 ik bundle.SPK
-  let DH2 := dh 2 ek bundle.IK
-  let DH3 := dh 3 ek bundle.SPK
-  let DHs :=
-    match bundle.OPK with
-    | some opk => [DH1, DH2, DH3, dh 4 ek opk]
-    | none     => [DH1, DH2, DH3]
-  kdf DHs
-
--- Fake "associated data" byte sequence
-def deriveAssociatedData (ika ikb : String) : String :=
-  s!"AD({ika},{ikb})"
+def deriveSharedSecret (ik : Key) (ek : Key) (bundle : Bundle)
+ : ByteSequence :=
+  let DH1 := ByteSequence.dh ik bundle.SPK
+  let DH2 := ByteSequence.dh ek bundle.IK
+  let DH3 := ByteSequence.dh ek bundle.SPK
+  let res := (DH1.append DH2).append DH3
+  match bundle.OPK with
+  | some opk => res.append (ByteSequence.dh ek opk)
+  | none     => res
 
 
 structure Message where
   senderName : AgentName
-  senderIK   : String
-  senderEK   : String
+  senderIK   : Key
+  senderEK   : Key
   opkUsed    : Option Nat
-  initialCiphertext : String
+  ciphertext : ByteSequence
  deriving Repr
 
 instance : ToString Message where
@@ -113,32 +142,36 @@ instance : ToString Message where
     s!"PreKeyMessage({m.senderName}, IK={m.senderIK}, EK={m.senderEK}, OPK? = {toString m.opkUsed}, ICT: {m.initialCiphertext})"
 
 
-def aeadEncrypt (key ad plaintext : String) : String :=
-  s!"AEAD({plaintext} | key={key}, ad={ad})"
+def encrypt (plaintext : String) (key ad : ByteSequence)
+  : ByteSequence :=
+  ByteSequence.aead plaintext key ad
 
-def aeadDecrypt (key ad ciphertext : String) : String :=
-  s!"DECRYPTED({ciphertext} | key={key}, ad={ad})"
+
+def decrypt (key ad : ByteSequence) (msg : Message)
+  : Option String :=
+  match msg.ciphertext with
+  | .aead txt key ad =>
+    sorry
+  | _ => none
 
 
 def makeMessage (alice : Agent) (EK_A : KeyPair)
-  (opkUsedIdx : Option Nat) (ciphertext : String) : Message :=
+  (opkUsedIdx : Option Nat) (ciphertext : ByteSequence)
+  : Message :=
   {
     senderName := alice.name
     senderIK   := alice.IK.publicKey
     senderEK   := EK_A.publicKey
     opkUsed    := opkUsedIdx
-    initialCiphertext := ciphertext
+    ciphertext := ciphertext
   }
 
 
 def agentsRegistry :=
-  let reg0 := []
-  let reg1 := createAgent reg0 "Alice"
-  let reg2 := createAgent reg1 "Bob"
-  reg2
+  Registry.mk [createAgent "Alice", createAgent "Bob"]
 
 
-def simulateStep4 (r : AgentRegistry) : Except String Message :=
+def simulateStep4 (r : Registry) : Except String Message :=
 
   let alice := getAgent? r "Alice"
   let bob := getAgent? r "Bob"
@@ -146,30 +179,28 @@ def simulateStep4 (r : AgentRegistry) : Except String Message :=
   match (alice, bob) with
   | (some a, some b) =>
 
-      -- Bob publishes a set of elliptic curve public keys to the server
-      let bundle := toPublicBundle b
+    -- Bob publishes a set of elliptic curve public keys to the server
+    let bundle := toPublicBundle b
 
-      -- Alice verifies the prekey signature and aborts the protocol if verification fail
-      let res := verify r bundle.SPK_Signature bundle.SPK bundle.IK
+    -- Alice verifies the prekey signature and aborts the protocol if
+    -- verification fail
+    if verify bundle then
+      let EK_A := generateKeyPair a.name "EK"
 
-      if res then
-        let EK_A := generateKeyPair "Alice_EK"
+      let sk := deriveSharedSecret a.IK.privateKey EK_A.privateKey bundle
+      let ad := ByteSequence.ad
+        (ByteSequence.encode a.IK.publicKey)
+        (ByteSequence.encode b.IK.publicKey)
 
-        let sk := deriveSharedSecret a.IK.privateKey EK_A.privateKey bundle
-        let ad := deriveAssociatedData a.IK.publicKey b.IK.publicKey
+      let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
+      let plaintext := "Hello Bob!"
+      let ciphertext := encrypt sk ad plaintext
 
-        let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
-        let plaintext := "Hello Bob!"
-        let ciphertext := aeadEncrypt sk ad plaintext
-
-        -- Alice sent the message
-        let msg := makeMessage a EK_A opkUsedIdx ciphertext
-
-        Except.ok msg
-
-      else
-        Except.error "Invalid SPK signature"
-
+      -- Alice sent the message
+      let msg := makeMessage a EK_A opkUsedIdx ciphertext
+      Except.ok msg
+    else
+      Except.error "Invalid SPK signature"
   | _ => Except.error "didnt find agents"
 
 
@@ -184,7 +215,7 @@ def simulateStep5 (r : AgentRegistry)
 
       let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
 
-      let ad := deriveAssociatedData ikpub bob.IK.publicKey
+      let ad := AssociatedData.mk ikpub bob.IK.publicKey
 
       let plaintext := aeadDecrypt sk ad msg.initialCiphertext
 
