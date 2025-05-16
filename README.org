@@ -1,0 +1,23 @@
+
+
+* pending issues
+
+- [ ] strings vs any other simple math computation over Nat?
+- [X] better types for Key, Private/Public
+- [ ] delete keys?
+- [ ] Agent ~> User
+    
+* dashboard
+
+
+Message sent by Alice
+
+M = AEAD(Hello Bob! | key=KDF(DH1(Alice_IK_priv,Bob_SPK_pub) ||
+   DH2(Alice_EK_priv,Bob_IK_pub) || DH3(Alice_EK_priv,Bob_SPK_pub) ||
+   DH4(Alice_EK_priv,Bob_OPK_0_pub)), ad=AD(Alice_IK_pub,Bob_IK_pub))
+
+Message decrypted by Bob
+
+DECRYPTED(M | key=KDF(DH1(Alice_IK_pub,Bob_SPK_priv) || DH2(Alice_EK_pub,Bob_IK_priv) ||
+  DH3(Alice_EK_pub,Bob_SPK_priv) || DH4(Alice_EK_pub,Bob_OPK_0_priv)), ad=AD(Alice_IK_pub,Bob_IK_pub))
+
