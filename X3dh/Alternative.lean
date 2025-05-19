@@ -105,7 +105,7 @@ structure Bundle where
   IK    : Key
   SPK   : Key
   SPK_Signature : ByteSequence
-  OPK   : Option Key
+  OPKS   : List Key
   deriving Repr
 
 -- signature verification
@@ -123,16 +123,16 @@ def toPublicBundle (agent : Agent) : Bundle :=
    SPK := agent.SPK.publicKey,
    SPK_Signature := ByteSequence.sig
     agent.IK.privateKey (ByteSequence.encode agent.SPK.publicKey),
-   OPK := agent.OPKs.head?.map (·.publicKey)
+   OPKS := agent.OPKs.map (·.publicKey)
  }
 
 
-def toPrivateBundle (agent : Agent) (opkUsed : Option Nat) : Bundle :=
+def toPrivateBundle (agent : Agent) : Bundle :=
  { IK := agent.IK.privateKey,
    SPK := agent.SPK.privateKey,
    SPK_Signature :=  ByteSequence.sig
       agent.IK.privateKey (ByteSequence.encode agent.SPK.privateKey),
-   OPK := opkUsed.bind (fun idx => agent.OPKs[idx]?.map (·.privateKey))
+   OPKS := agent.OPKs.map (·.privateKey)
  }
 
 
@@ -143,9 +143,9 @@ def deriveSharedSecret (ik : Key) (ek : Key) (bundle : Bundle)
   let DH2 := ByteSequence.dh ek bundle.IK
   let DH3 := ByteSequence.dh ek bundle.SPK
   let res := (DH1.append DH2).append DH3
-  match bundle.OPK with
-  | some opk => res.append (ByteSequence.dh ek opk)
-  | none     => res
+  match bundle.OPKS with
+  | opk :: _ => res.append (ByteSequence.dh ek opk)
+  | []     => res
 
 
 structure Message where
@@ -208,7 +208,7 @@ def sendInitMessage (sender : Agent) (target : Agent)
       (ByteSequence.encode alice.IK.publicKey)
       (ByteSequence.encode bob.IK.publicKey)
 
-    let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
+    let opkUsedIdx := if bundle.OPKS.length > 0 then some 0 else none
     let plaintext := txt
     let ciphertext := encrypt plaintext sk ad
 
@@ -228,7 +228,7 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   let ikpub := msg.senderIK
   let ekpub := msg.senderEK
 
-  let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
+  let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob)
 
   let ad := ByteSequence.append
     (ByteSequence.encode ikpub)
@@ -239,20 +239,10 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   | none => Except.error s!"not decrypted"
 
 
-def agents :=
-  Registry.mk [createAgent "Alice", createAgent "Bob"]
-
 #eval
-  let alice := agents.agents[0]
-  let bob := agents.agents[1]
-  let res := sendInitMessage alice bob "Hello Bob"
-  match res with
-  | Except.ok m => println! m
-  | Except.error s => println! s
-
-#eval
-  let alice := agents.agents[0]
-  let bob := agents.agents[1]
+  let r := Registry.mk [createAgent "Alice", createAgent "Bob"]
+  let alice := r.agents[0]
+  let bob := r.agents[1]
   let msg := sendInitMessage alice bob "Hello Bob"
   match msg with
   | Except.ok m => receiveInitMessage bob m
