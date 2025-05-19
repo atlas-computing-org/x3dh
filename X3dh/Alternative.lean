@@ -44,9 +44,27 @@ inductive ByteSequence where
  | dh     : Key → Key → ByteSequence
  | append : ByteSequence → ByteSequence → ByteSequence
  | sig    : Key → ByteSequence → ByteSequence
- | ad     : ByteSequence → ByteSequence → ByteSequence
  | aead   : String → ByteSequence → ByteSequence → ByteSequence
  deriving Repr, DecidableEq
+
+ def ByteSequence.toString : ByteSequence → String
+  | .encode k      => s!"enc({k})"
+  | .dh k1 k2      => s!"dh({k1}, {k2})"
+  | .append b1 b2  => s!"({b1.toString} || {b2.toString})"
+  | .sig k b       => s!"sig({k}, {b.toString})"
+  | .aead txt k a  => s!"aead(M:{txt}, SK:{k.toString}, AD:{a.toString})"
+
+instance : ToString ByteSequence where
+  toString := ByteSequence.toString
+
+def match_bs (b1 b2 : ByteSequence) : Bool :=
+  match b1, b2 with
+  | .dh k1 k2, .dh k3 k4 =>
+    match_key k1 k3 ∧ match_key k2 k4
+  | .append b1 b2, .append b3 b4 =>
+    match_bs b1 b3 ∧ match_bs b2 b4
+  | .encode k1, .encode k2 => k1 = k2
+  | _, _ => false
 
 
 -- Define a simple abstract type for a Key Pair
@@ -108,13 +126,14 @@ def toPublicBundle (agent : Agent) : Bundle :=
    OPK := agent.OPKs.head?.map (·.publicKey)
  }
 
+
 def toPrivateBundle (agent : Agent) (opkUsed : Option Nat) : Bundle :=
- {
-    IK := agent.IK.privateKey,
-    SPK := agent.SPK.privateKey,
-    SPK_Signature := { message := "dummy1" , signer := "dummy2"},
-    OPK := opkUsed.bind (fun idx => agent.OPKs[idx]?.map (·.privateKey))
-  }
+ { IK := agent.IK.privateKey,
+   SPK := agent.SPK.privateKey,
+   SPK_Signature :=  ByteSequence.sig
+      agent.IK.privateKey (ByteSequence.encode agent.SPK.privateKey),
+   OPK := opkUsed.bind (fun idx => agent.OPKs[idx]?.map (·.privateKey))
+ }
 
 
 -- Alice computes shared secret from her ephemeral key and Bob's bundle
@@ -139,8 +158,7 @@ structure Message where
 
 instance : ToString Message where
   toString m :=
-    s!"PreKeyMessage({m.senderName}, IK={m.senderIK}, EK={m.senderEK}, OPK? = {toString m.opkUsed}, ICT: {m.initialCiphertext})"
-
+    s!"Message({m.senderName}, IK={m.senderIK}, EK={m.senderEK}, OPK={toString m.opkUsed}, T={m.ciphertext})"
 
 def encrypt (plaintext : String) (key ad : ByteSequence)
   : ByteSequence :=
@@ -150,8 +168,11 @@ def encrypt (plaintext : String) (key ad : ByteSequence)
 def decrypt (key ad : ByteSequence) (msg : Message)
   : Option String :=
   match msg.ciphertext with
-  | .aead txt key ad =>
-    sorry
+  | .aead txt keyM adM =>
+    if match_bs keyM key ∧ match_bs adM ad then
+      some txt
+    else
+      none
   | _ => none
 
 
@@ -165,7 +186,6 @@ def makeMessage (alice : Agent) (EK_A : KeyPair)
     opkUsed    := opkUsedIdx
     ciphertext := ciphertext
   }
-
 
 
 def agentsRegistry :=
@@ -189,7 +209,7 @@ def simulateStep4 (r : Registry) : Except String Message :=
       let EK_A := generateKeyPair a.name "EK"
 
       let sk := deriveSharedSecret a.IK.privateKey EK_A.privateKey bundle
-      let ad := ByteSequence.ad
+      let ad := ByteSequence.append
         (ByteSequence.encode a.IK.publicKey)
         (ByteSequence.encode b.IK.publicKey)
 
@@ -216,18 +236,21 @@ def simulateStep5 (r : Registry)
 
       let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
 
-      let ad := ByteSequence.ad
+      let ad := ByteSequence.append
         (ByteSequence.encode ikpub)
         (ByteSequence.encode bob.IK.publicKey)
 
       match decrypt sk ad msg with
       | some s => Except.ok s
-      | none => Except.error "not decrypted"
+      | none => Except.error s!"not decrypted {sk} {ad} {msg}"
 
   | none => Except.error "Bob not found"
 
 
-#eval simulateStep4 agentsRegistry
+#eval let res := simulateStep4 agentsRegistry
+  match res with
+  | Except.ok m => println! m
+  | Except.error s => println! s
 
 #eval let msg := simulateStep4 agentsRegistry
   match msg with
