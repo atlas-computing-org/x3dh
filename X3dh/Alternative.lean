@@ -188,74 +188,87 @@ def makeMessage (alice : Agent) (EK_A : KeyPair)
   }
 
 
-def agentsRegistry :=
+def sendInitMessage (sender : Agent) (target : Agent)
+  (txt : String) : Except String Message :=
+
+  -- agents
+  let alice := sender
+  let bob := target
+
+  -- Bob publishes a set of elliptic curve public keys to the server
+  let bundle := toPublicBundle bob
+
+  -- Alice verifies the prekey signature and aborts the protocol if
+  -- verification fail
+  if verify bundle then
+    let EK_A := generateKeyPair alice.name "EK"
+
+    let sk := deriveSharedSecret alice.IK.privateKey EK_A.privateKey bundle
+    let ad := ByteSequence.append
+      (ByteSequence.encode alice.IK.publicKey)
+      (ByteSequence.encode bob.IK.publicKey)
+
+    let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
+    let plaintext := txt
+    let ciphertext := encrypt plaintext sk ad
+
+    -- Alice sent the message
+    let msg := makeMessage alice EK_A opkUsedIdx ciphertext
+    Except.ok msg
+  else
+    Except.error "Invalid SPK signature"
+
+
+def receiveInitMessage  (receiver : Agent) (msg : Message)
+  : Except String String :=
+
+  let bob := receiver
+
+  -- get message from alice
+  let ikpub := msg.senderIK
+  let ekpub := msg.senderEK
+
+  let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
+
+  let ad := ByteSequence.append
+    (ByteSequence.encode ikpub)
+    (ByteSequence.encode bob.IK.publicKey)
+
+  match decrypt sk ad msg with
+  | some s => Except.ok s
+  | none => Except.error s!"not decrypted"
+
+
+def agents :=
   Registry.mk [createAgent "Alice", createAgent "Bob"]
 
-
-def simulateStep4 (r : Registry) : Except String Message :=
-
-  let alice := getAgent? r "Alice"
-  let bob := getAgent? r "Bob"
-
-  match (alice, bob) with
-  | (some a, some b) =>
-
-    -- Bob publishes a set of elliptic curve public keys to the server
-    let bundle := toPublicBundle b
-
-    -- Alice verifies the prekey signature and aborts the protocol if
-    -- verification fail
-    if verify bundle then
-      let EK_A := generateKeyPair a.name "EK"
-
-      let sk := deriveSharedSecret a.IK.privateKey EK_A.privateKey bundle
-      let ad := ByteSequence.append
-        (ByteSequence.encode a.IK.publicKey)
-        (ByteSequence.encode b.IK.publicKey)
-
-      let opkUsedIdx := if bundle.OPK.isSome then some 0 else none
-      let plaintext := "Hello Bob!"
-      let ciphertext := encrypt plaintext sk ad
-
-      -- Alice sent the message
-      let msg := makeMessage a EK_A opkUsedIdx ciphertext
-      Except.ok msg
-    else
-      Except.error "Invalid SPK signature"
-  | _ => Except.error "didnt find agents"
-
-
-def simulateStep5 (r : Registry)
-  (msg : Message) : Except String String :=
-  match getAgent? r "Bob" with
-  | some bob =>
-
-      -- get message from alice
-      let ikpub := msg.senderIK
-      let ekpub := msg.senderEK
-
-      let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob msg.opkUsed)
-
-      let ad := ByteSequence.append
-        (ByteSequence.encode ikpub)
-        (ByteSequence.encode bob.IK.publicKey)
-
-      match decrypt sk ad msg with
-      | some s => Except.ok s
-      | none => Except.error s!"not decrypted {sk} {ad} {msg}"
-
-  | none => Except.error "Bob not found"
-
-
-#eval let res := simulateStep4 agentsRegistry
+#eval
+  let alice := agents.agents[0]
+  let bob := agents.agents[1]
+  let res := sendInitMessage alice bob "Hello Bob"
   match res with
   | Except.ok m => println! m
   | Except.error s => println! s
 
-#eval let msg := simulateStep4 agentsRegistry
+#eval
+  let alice := agents.agents[0]
+  let bob := agents.agents[1]
+  let msg := sendInitMessage alice bob "Hello Bob"
   match msg with
-  | Except.ok m => simulateStep5 agentsRegistry m
+  | Except.ok m => receiveInitMessage bob m
   | Except.error s => Except.error s
+
+
+theorem commonSharedSecret {a b : Agent} {txt : String} (msg : Message) :
+   sendInitMessage a b txt = Except.ok msg →
+   receiveInitMessage b msg = Except.ok txt := by
+   intro h
+   simp [sendInitMessage, receiveInitMessage,
+     toPublicBundle, toPrivateBundle, deriveSharedSecret,
+     decrypt, encrypt,
+     ByteSequence.append, makeMessage, verify,
+     match_bs, match_key] at *
+   sorry
 
 
 end X3DH
