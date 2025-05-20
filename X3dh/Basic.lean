@@ -1,275 +1,264 @@
-import Init.Data.ByteArray
-
-/-
-  X3DH Key Agreement Protocol implementation
-  Based on the specification by Moxie Marlinspike and Trevor Perrin
--/
+import Mathlib.Tactic
 
 namespace X3DH
 
-/-- Cryptographic curve selection -/
-inductive Curve
-  | x25519
-  | x448
-  deriving BEq, Repr
+-- Registry of agent identities and key pairs
+abbrev AgentName := String
 
-instance : ToString Curve where
-  toString : Curve → String
-  | Curve.x25519 => "Curve.x25519"
-  | Curve.x448 => "Curve.x448"
+inductive Kind where
+ | pub : Kind
+ | prv : Kind
+ | sec : Kind
+deriving Repr, DecidableEq
 
-/-- Hash function selection -/
-inductive HashFunction
-  | sha256
-  | sha512
-  deriving BEq, Repr
+instance : ToString Kind where
+  toString k :=
+   match k with
+   | .pub => "public"
+   | .prv => "private"
+   | .sec => "secret"
 
-/-- Protocol parameters -/
-structure Parameters where
-  curve : Curve
-  hash : HashFunction
-  info : String
-  deriving BEq, Repr
+def Kind.rev : Kind → Kind
+| .pub => .prv
+| .prv => .pub
+| .sec => .sec
 
+-- a structure to hold a Key
+structure Key where
+  userName : String
+  label : String
+  kind : Kind
+ deriving Repr, DecidableEq
 
-/-- Public key wrapper -/
-structure PublicKey where
-  curve : Curve
-  bytes : ByteArray
+instance : ToString Key where
+  toString k := s!"{k.userName}_{k.label}_{k.kind}"
 
-instance : BEq PublicKey where
-  beq (a b : PublicKey) : Bool :=
-    a.curve == b.curve ∧ a.bytes.toList == b.bytes.toList
-
-instance : Repr PublicKey where
-  reprPrec (pk : PublicKey) _ :=
-    s!"PublicKey(curve: {pk.curve}, bytes: {pk.bytes.toList})"
-
-/-- Private key wrapper -/
-structure PrivateKey where
-  curve : Curve
-  bytes : ByteArray
-
-instance : BEq PrivateKey where
-  beq (a b : PrivateKey) : Bool :=
-    a.curve == b.curve ∧ a.bytes.toList == b.bytes.toList
-
-instance : Repr PrivateKey where
-  reprPrec (pk : PrivateKey) _ :=
-    s!"PublicKey(curve: {pk.curve}, bytes: {pk.bytes.toList})"
+def match_key (k1 k2 : Key) : Bool :=
+  k1.kind.rev = k2.kind
+  ∧ k1.userName = k2.userName
+  ∧ k1.label = k2.label
 
 
-/-- Key pair combining public and private components -/
+inductive ByteSequence where
+ | encode : Key → ByteSequence
+ | dh     : Key → Key → ByteSequence
+ | append : ByteSequence → ByteSequence → ByteSequence
+ | sig    : Key → ByteSequence → ByteSequence
+ | aead   : String → ByteSequence → ByteSequence → ByteSequence
+ deriving Repr, DecidableEq
+
+def ByteSequence.toString : ByteSequence → String
+  | .encode k      => s!"enc({k})"
+  | .dh k1 k2      => s!"dh({k1}, {k2})"
+  | .append b1 b2  => s!"({b1.toString} || {b2.toString})"
+  | .sig k b       => s!"sig({k}, {b.toString})"
+  | .aead txt k a  => s!"aead(M:{txt}, SK:{k.toString}, AD:{a.toString})"
+
+instance : ToString ByteSequence where
+  toString := ByteSequence.toString
+
+def match_bs (b1 b2 : ByteSequence) : Bool :=
+  match b1, b2 with
+  | .dh k1 k2, .dh k3 k4 =>
+    match_key k1 k3 ∧ match_key k2 k4
+  | .append b1 b2, .append b3 b4 =>
+    match_bs b1 b3 ∧ match_bs b2 b4
+  | .encode k1, .encode k2 => k1 = k2
+  | _, _ => false
+
+
+-- Define a simple abstract type for a Key Pair
 structure KeyPair where
-  publicKey : PublicKey
-  privateKey : PrivateKey
-  deriving BEq, Repr
+  privateKey : Key
+  publicKey  : Key
+ deriving Repr
 
-/-- Signature wrapper -/
-structure Signature where
-  bytes : ByteArray
-  deriving BEq, Repr
 
-/-- Encode a public key as specified in the protocol -/
-def encodePublicKey (pk : PublicKey) : ByteArray :=
-  -- In real implementation: byte for the curve type followed by little-endian u-coordinate
-  match pk.curve with
-  | Curve.x25519 => ByteArray.mk #[0x01] ++ pk.bytes
-  | Curve.x448 => ByteArray.mk #[0x02] ++ pk.bytes
+-- The agent's full internal state
+structure Agent where
+  name          : AgentName
+  IK            : KeyPair
+  SPK           : KeyPair
+  OPKs          : List KeyPair
+  deriving Repr
 
-/-- Perform DH key exchange between two keys -/
-def diffieHellman (privateKey : PrivateKey) (publicKey : PublicKey) : ByteArray :=
-  -- In real implementation: actual DH calculation using X25519 or X448
-  -- For this model, we'll just concatenate the bytes as a placeholder
-  privateKey.bytes ++ publicKey.bytes
+def generateKeyPair (name : AgentName) (label : String) : KeyPair :=
+  { privateKey := Key.mk name label Kind.prv,
+    publicKey := Key.mk name label Kind.pub }
 
-/-- Calculate HKDF key derivation -/
-def kdf (params : Parameters) (km : ByteArray) : ByteArray :=
-  -- In real implementation: HKDF with proper inputs
-  -- For this model, just returning a placeholder
-  let f := match params.curve with
-    | Curve.x25519 => ByteArray.mk (Array.mkArray 32 0xFF)
-    | Curve.x448 => ByteArray.mk (Array.mkArray 57 0xFF)
+structure Registry where
+  agents : List Agent
 
-  let input := f ++ km
-  -- In real implementation: proper HKDF calculation
-  -- Return fixed-size 32-byte array as per spec
-  ByteArray.mk (Array.mkArray 32 0x00)
+-- create a new agent
+def createAgent (name : AgentName) : Agent :=
+  let IK := generateKeyPair name "IK"
+  let SPK := generateKeyPair name "SPK"
+  let OPKs := (List.range 5).map (λ i => generateKeyPair name s!"OPK{i}")
+  Agent.mk name IK SPK OPKs
 
-/-- Generate a signature for a message using a private key -/
-def sign (privateKey : PrivateKey) (message : ByteArray) : Signature :=
-  -- In real implementation: XEdDSA signature
-  Signature.mk message
+-- find an agent by name
+def getAgent? (reg : Registry) (name : AgentName) : Option Agent :=
+  reg.agents.find? (·.name = name)
 
-/-- Verify a signature for a message using a public key -/
-def verifySignature (publicKey : PublicKey) (message : ByteArray) (signature : Signature) : Bool :=
-  -- In real implementation: XEdDSA verification
-  true
+-- a bundle of public or private keys and signature
+structure Bundle where
+  IK    : Key
+  SPK   : Key
+  SPK_Signature : ByteSequence
+  OPKS   : List Key
+  deriving Repr
 
-/-- Bob's published prekey bundle -/
-structure PrekeyBundle where
-  identityKey : PublicKey
-  signedPrekey : PublicKey
-  prekeySignature : Signature
-  oneTimePrekey : Option PublicKey
-  deriving BEq, Repr
+-- signature verification
+def verify (b : Bundle) : Bool :=
+  match b.SPK_Signature with
+  | ByteSequence.sig privK enc =>
+    match enc with
+    | ByteSequence.encode s => match_key privK b.IK ∧ s = b.SPK
+    | _ => False
+  | _ => False
 
-/-- Alice's initial message -/
-structure InitialMessage where
-  identityKey : PublicKey
-  ephemeralKey : PublicKey
-  usedOneTimePrekey : Bool
-  usedSignedPrekeyId : Nat
-  usedOneTimePrekeyId : Option Nat
-  ciphertext : ByteArray
-  deriving BEq, Repr
 
-/-- Generate a prekey bundle for Bob -/
-def generatePrekeyBundle (
-  params : Parameters,
-  identityKeyPair : KeyPair,
-  signedPrekeyPair : KeyPair,
-  oneTimePrekeyPairs : List KeyPair
-) : PrekeyBundle :=
-  let encodedSignedPrekey := encodePublicKey signedPrekeyPair.publicKey
-  let signature := sign identityKeyPair.privateKey encodedSignedPrekey
+def toPublicBundle (agent : Agent) : Bundle :=
+ { IK := agent.IK.publicKey,
+   SPK := agent.SPK.publicKey,
+   SPK_Signature := ByteSequence.sig
+    agent.IK.privateKey (ByteSequence.encode agent.SPK.publicKey),
+   OPKS := agent.OPKs.map (·.publicKey)
+ }
 
-  -- In real implementation, would select one random one-time prekey
-  let oneTimePrekey := oneTimePrekeyPairs.head?.map (·.publicKey)
 
-  PrekeyBundle.mk
-    identityKeyPair.publicKey
-    signedPrekeyPair.publicKey
-    signature
-    oneTimePrekey
+def toPrivateBundle (agent : Agent) : Bundle :=
+ { IK := agent.IK.privateKey,
+   SPK := agent.SPK.privateKey,
+   SPK_Signature :=  ByteSequence.sig
+      agent.IK.privateKey (ByteSequence.encode agent.SPK.privateKey),
+   OPKS := agent.OPKs.map (·.privateKey)
+ }
 
-/-- Alice sends initial message to Bob -/
-def sendInitialMessage (
-  params : Parameters,
-  aliceIdentityKeyPair : KeyPair,
-  prekeyBundle : PrekeyBundle,
-  initialData : ByteArray
-) : Option (InitialMessage × ByteArray) := do
-  -- Verify signed prekey signature
-  let encodedSignedPrekey := encodePublicKey prekeyBundle.signedPrekey
-  unless verifySignature prekeyBundle.identityKey encodedSignedPrekey prekeyBundle.prekeySignature do
-    return none
 
-  -- Generate ephemeral key
-  let ephemeralKeyPair := KeyPair.mk
-    (PublicKey.mk params.curve (ByteArray.mk (Array.mkArray 32 0x42))) -- placeholder
-    (PrivateKey.mk params.curve (ByteArray.mk (Array.mkArray 32 0x42))) -- placeholder
+-- Alice computes shared secret from her ephemeral key and Bob's bundle
+def deriveSharedSecret (ik : Key) (ek : Key) (bundle : Bundle)
+ : ByteSequence :=
+  let DH1 := ByteSequence.dh ik bundle.SPK
+  let DH2 := ByteSequence.dh ek bundle.IK
+  let DH3 := ByteSequence.dh ek bundle.SPK
+  let res := (DH1.append DH2).append DH3
+  match bundle.OPKS with
+  | opk :: _ => res.append (ByteSequence.dh ek opk)
+  | []     => res
 
-  -- Calculate DH outputs
-  let dh1 := diffieHellman aliceIdentityKeyPair.privateKey prekeyBundle.signedPrekey
-  let dh2 := diffieHellman ephemeralKeyPair.privateKey prekeyBundle.identityKey
-  let dh3 := diffieHellman ephemeralKeyPair.privateKey prekeyBundle.signedPrekey
 
-  -- Calculate shared key based on whether one-time prekey was used
-  let dhOutputs := match prekeyBundle.oneTimePrekey with
-  | none => dh1 ++ dh2 ++ dh3
-  | some oneTimePrekey =>
-      let dh4 := diffieHellman ephemeralKeyPair.privateKey oneTimePrekey
-      dh1 ++ dh2 ++ dh3 ++ dh4
+structure Message where
+  senderName : AgentName
+  senderIK   : Key
+  senderEK   : Key
+  opkUsed    : Option Nat
+  ciphertext : ByteSequence
+ deriving Repr
 
-  let sk := kdf params dhOutputs
+instance : ToString Message where
+  toString m :=
+    s!"Message({m.senderName}, IK={m.senderIK}, EK={m.senderEK}, OPK={toString m.opkUsed}, T={m.ciphertext})"
 
-  -- Calculate associated data
-  let ad := encodePublicKey aliceIdentityKeyPair.publicKey ++ encodePublicKey prekeyBundle.identityKey
+def encrypt (plaintext : String) (key ad : ByteSequence)
+  : ByteSequence :=
+  ByteSequence.aead plaintext key ad
 
-  -- Encrypt initial data (in real implementation)
-  -- Here we'll just concatenate SK and the data as a placeholder
-  let ciphertext := sk ++ initialData
 
-  -- Construct initial message
-  let initialMessage := InitialMessage.mk
-    aliceIdentityKeyPair.publicKey
-    ephemeralKeyPair.publicKey
-    prekeyBundle.oneTimePrekey.isSome
-    1 -- placeholder for signedPrekeyId
-    (some 2) -- placeholder for oneTimePrekeyId
-    ciphertext
+def decrypt (key ad : ByteSequence) (msg : Message)
+  : Option String :=
+  match msg.ciphertext with
+  | .aead txt keyM adM =>
+    if match_bs keyM key ∧ match_bs adM ad then
+      some txt
+    else
+      none
+  | _ => none
 
-  return (initialMessage, sk)
 
-/-- Bob receives initial message from Alice -/
-def receiveInitialMessage (
-  params : Parameters,
-  bobIdentityKeyPair : KeyPair,
-  bobSignedPrekeyPair : KeyPair,
-  bobOneTimePrekeyPair : Option KeyPair,
-  message : InitialMessage
-) : Option ByteArray := do
-  -- Calculate DH outputs
-  let dh1 := diffieHellman bobSignedPrekeyPair.privateKey message.identityKey
-  let dh2 := diffieHellman bobIdentityKeyPair.privateKey message.ephemeralKey
-  let dh3 := diffieHellman bobSignedPrekeyPair.privateKey message.ephemeralKey
+def makeMessage (alice : Agent) (EK_A : KeyPair)
+  (opkUsedIdx : Option Nat) (ciphertext : ByteSequence)
+  : Message :=
+  {
+    senderName := alice.name
+    senderIK   := alice.IK.publicKey
+    senderEK   := EK_A.publicKey
+    opkUsed    := opkUsedIdx
+    ciphertext := ciphertext
+  }
 
-  -- Calculate shared key based on whether one-time prekey was used
-  let dhOutputs := match (message.usedOneTimePrekey, bobOneTimePrekeyPair) with
-  | (true, some oneTimePrekeyPair) =>
-      let dh4 := diffieHellman oneTimePrekeyPair.privateKey message.ephemeralKey
-      dh1 ++ dh2 ++ dh3 ++ dh4
-  | _ => dh1 ++ dh2 ++ dh3
 
-  let sk := kdf params dhOutputs
+def sendInitMessage (sender : Agent) (target : Agent)
+  (txt : String) : Except String Message :=
 
-  -- Calculate associated data
-  let ad := encodePublicKey message.identityKey ++ encodePublicKey bobIdentityKeyPair.publicKey
+  -- agents
+  let alice := sender
+  let bob := target
 
-  -- Decrypt initial data (in real implementation)
-  -- Here we'll just verify that the ciphertext starts with SK
-  let expectedPrefix := sk.toList.take sk.size
-  let actualPrefix := message.ciphertext.toList.take sk.size
+  -- Bob publishes a set of elliptic curve public keys to the server
+  let bundle := toPublicBundle bob
 
-  unless expectedPrefix == actualPrefix do
-    return none
+  -- Alice verifies the prekey signature and aborts the protocol if
+  -- verification fail
+  if verify bundle then
+    let EK_A := generateKeyPair alice.name "EK"
 
-  return sk
+    let sk := deriveSharedSecret alice.IK.privateKey EK_A.privateKey bundle
+    let ad := ByteSequence.append
+      (ByteSequence.encode alice.IK.publicKey)
+      (ByteSequence.encode bob.IK.publicKey)
+
+    let opkUsedIdx := if bundle.OPKS.length > 0 then some 0 else none
+    let plaintext := txt
+    let ciphertext := encrypt plaintext sk ad
+
+    -- Alice sent the message
+    let msg := makeMessage alice EK_A opkUsedIdx ciphertext
+    Except.ok msg
+  else
+    Except.error "Invalid SPK signature"
+
+
+def receiveInitMessage  (receiver : Agent) (msg : Message)
+  : Except String String :=
+
+  let bob := receiver
+
+  -- get message from alice
+  let ikpub := msg.senderIK
+  let ekpub := msg.senderEK
+
+  let sk := deriveSharedSecret ikpub ekpub (toPrivateBundle bob)
+
+  let ad := ByteSequence.append
+    (ByteSequence.encode ikpub)
+    (ByteSequence.encode bob.IK.publicKey)
+
+  match decrypt sk ad msg with
+  | some s => Except.ok s
+  | none => Except.error s!"not decrypted"
+
+
+#eval
+  let r := Registry.mk [createAgent "Alice", createAgent "Bob"]
+  let alice := r.agents[0]
+  let bob := r.agents[1]
+  let msg := sendInitMessage alice bob "Hello Bob"
+  match msg with
+  | Except.ok m => receiveInitMessage bob m
+  | Except.error s => Except.error s
+
+
+theorem commonSharedSecret {a b : Agent} {txt : String} (msg : Message) :
+   sendInitMessage a b txt = Except.ok msg →
+   receiveInitMessage b msg = Except.ok txt := by
+   intro h
+   simp [sendInitMessage, receiveInitMessage,
+     toPublicBundle, toPrivateBundle, deriveSharedSecret,
+     decrypt, encrypt,
+     ByteSequence.append, makeMessage, verify,
+     match_bs, match_key] at *
+   sorry
+
 
 end X3DH
-
-open X3DH in
-/-- Example usage of the X3DH protocol -/
-def exampleUsage : IO Unit := do
-  let params : Parameters :=
-    ⟨X3DH.Curve.x25519, X3DH.HashFunction.sha512, "MyProtocol"⟩
-
-  -- Alice's identity key
-  let aliceIdKeyPair := KeyPair.mk
-    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x01)))
-    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x02)))
-
-  -- Bob's identity key
-  let bobIdKeyPair := KeyPair.mk
-    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x03)))
-    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x04)))
-
-  -- Bob's signed prekey
-  let bobSignedPrekeyPair := KeyPair.mk
-    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x05)))
-    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x06)))
-
-  -- Bob's one-time prekey
-  let bobOneTimePrekeyPair := KeyPair.mk
-    (PublicKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x07)))
-    (PrivateKey.mk X3DH.Curve.x25519 (ByteArray.mk (Array.mkArray 32 0x08)))
-
-  -- Bob generates prekey bundle
-  let prekeyBundle := generatePrekeyBundle params bobIdKeyPair bobSignedPrekeyPair [bobOneTimePrekeyPair]
-  IO.println s!"Bob's prekey bundle: {prekeyBundle}"
-
-  -- Alice sends initial message
-  let initialData := ByteArray.mk #[0x48, 0x65, 0x6C, 0x6C, 0x6F] -- "Hello"
-  match sendInitialMessage params aliceIdKeyPair prekeyBundle initialData with
-  | none => IO.println "Failed to send initial message"
-  | some (initialMessage, aliceSK) =>
-      IO.println s!"Alice sent initial message: {initialMessage}"
-      IO.println s!"Alice derived shared key: {aliceSK}"
-
-      -- Bob receives initial message
-      match receiveInitialMessage params bobIdKeyPair bobSignedPrekeyPair (some bobOneTimePrekeyPair) initialMessage with
-      | none => IO.println "Bob failed to process initial message"
-      | some bobSK =>
-          IO.println s!"Bob derived shared key: {bobSK}"
-          IO.println s!"Keys match: {aliceSK == bobSK}"
