@@ -8,7 +8,6 @@ abbrev AgentName := String
 inductive Kind where
  | pub : Kind
  | prv : Kind
- | sec : Kind
 deriving Repr, DecidableEq
 
 instance : ToString Kind where
@@ -16,12 +15,10 @@ instance : ToString Kind where
    match k with
    | .pub => "public"
    | .prv => "private"
-   | .sec => "secret"
 
 def Kind.rev : Kind → Kind
 | .pub => .prv
 | .prv => .pub
-| .sec => .sec
 
 -- a structure to hold a Key
 structure Key where
@@ -176,27 +173,23 @@ def decrypt (key ad : ByteSequence) (msg : Message)
   | _ => none
 
 
-def makeMessage (alice : Agent) (EK_A : KeyPair)
+def makeMessage (alice : Agent) (EK_A : Key)
   (opkUsedIdx : Option Nat) (ciphertext : ByteSequence)
   : Message :=
   {
     senderName := alice.name
     senderIK   := alice.IK.publicKey
-    senderEK   := EK_A.publicKey
+    senderEK   := EK_A
     opkUsed    := opkUsedIdx
     ciphertext := ciphertext
   }
 
 
-def sendInitMessage (sender : Agent) (target : Agent)
+def sendInitMessage (sender : Agent) (bundle : Bundle)
   (txt : String) : Except String Message :=
 
-  -- agents
+  -- the sender codename is Alice
   let alice := sender
-  let bob := target
-
-  -- Bob publishes a set of elliptic curve public keys to the server
-  let bundle := toPublicBundle bob
 
   -- Alice verifies the prekey signature and aborts the protocol if
   -- verification fail
@@ -206,14 +199,14 @@ def sendInitMessage (sender : Agent) (target : Agent)
     let sk := deriveSharedSecret alice.IK.privateKey EK_A.privateKey bundle
     let ad := ByteSequence.append
       (ByteSequence.encode alice.IK.publicKey)
-      (ByteSequence.encode bob.IK.publicKey)
+      (ByteSequence.encode bundle.IK)
 
     let opkUsedIdx := if bundle.OPKS.length > 0 then some 0 else none
     let plaintext := txt
     let ciphertext := encrypt plaintext sk ad
 
     -- Alice sent the message
-    let msg := makeMessage alice EK_A opkUsedIdx ciphertext
+    let msg := makeMessage alice EK_A.publicKey opkUsedIdx ciphertext
     Except.ok msg
   else
     Except.error "Invalid SPK signature"
@@ -243,7 +236,7 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   let r := Registry.mk [createAgent "Alice", createAgent "Bob"]
   let alice := r.agents[0]
   let bob := r.agents[1]
-  let msg := sendInitMessage alice bob "Hello Bob"
+  let msg := sendInitMessage alice (toPublicBundle bob) "Hello Bob"
   match msg with
   | Except.ok m => receiveInitMessage bob m
   | Except.error s => Except.error s
