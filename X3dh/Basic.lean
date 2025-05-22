@@ -20,6 +20,12 @@ def Kind.rev : Kind → Kind
  | .pub => .prv
  | .prv => .pub
 
+theorem Kind.rev_rev : ∀ k : Kind, k.rev.rev = k := by
+  intro h
+  cases h with
+  | pub => rfl
+  | prv => rfl
+
 -- a structure to hold a Key
 structure Key where
   userName : String
@@ -35,7 +41,7 @@ def match_key (k1 k2 : Key) : Bool :=
   k1.userName = k2.userName
   ∧ k1.label = k2.label
   ∧ k1.kind.rev = k2.kind
-
+  ∧ k1.kind = k2.kind.rev
 
 inductive ByteSequence where
  | encode : Key → ByteSequence
@@ -84,7 +90,7 @@ structure Agent where
 def generateKeyPair (name : AgentName) (label : String) : KeyPair :=
   { privateKey := Key.mk name label Kind.prv,
     publicKey  := Key.mk name label Kind.pub,
-    valid      := by simp [match_key]; rfl }
+    valid      := by simp [match_key]; apply And.intro; repeat simp [Kind.rev]}
 
 structure Registry where
   agents : List Agent
@@ -312,8 +318,33 @@ theorem commonSharedSecret {a b : Agent} {txt : String}
   simp [h₂, h]
   rw [← h₁]
   simp [match_bs_append, match_bs_dh]
-  sorry
-
+  have h₆ : match_bs
+     ((ByteSequence.encode a.IK.publicKey).append (ByteSequence.encode b.IK.publicKey))
+     ((ByteSequence.encode a.IK.publicKey).append (ByteSequence.encode b.IK.publicKey)) := by
+    simp [match_bs]
+  simp [h₆]
+  have h₇ : match_bs
+            (((ByteSequence.dh a.IK.privateKey b.SPK.publicKey).append
+              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.IK.publicKey)).append
+              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.SPK.publicKey))
+            (((ByteSequence.dh a.IK.publicKey b.SPK.privateKey).append
+              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.IK.privateKey)).append
+              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.SPK.privateKey)) := by
+      simp [match_bs, match_key]
+      have iav := a.IK.valid
+      have ibv := b.IK.valid
+      have spav := a.SPK.valid
+      have spbv := b.SPK.valid
+      simp [match_key] at *
+      simp [iav, ibv, spav, spbv]
+      repeat apply And.intro
+      repeat simp [Kind.rev_rev]
+      repeat apply And.intro
+      simp [Kind.rev]
+      simp [Kind.rev]
+      simp [Kind.rev_rev]
+      simp [Kind.rev]
+  simp [h₇]
 
 
 end X3DH
