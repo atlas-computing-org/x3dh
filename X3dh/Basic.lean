@@ -274,6 +274,10 @@ theorem commonSharedSecret {a b : Agent} {txt : String}
     ByteSequence.append, makeMessage, verify,
     match_bs] at *
   have h₂ := all_agentIK b
+  have iav := a.IK.valid
+  have ibv := b.IK.valid
+  have spav := a.SPK.valid
+  have spbv := b.SPK.valid
   simp [h₂, h] at h₁
   simp [h₂, h]
   rw [← h₁]
@@ -290,10 +294,6 @@ theorem commonSharedSecret {a b : Agent} {txt : String}
      (((ByteSequence.dh a.IK.publicKey b.SPK.privateKey).append
        (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.IK.privateKey)).append
       (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.SPK.privateKey)) := by
-    have iav := a.IK.valid
-    have ibv := b.IK.valid
-    have spav := a.SPK.valid
-    have spbv := b.SPK.valid
     simp [match_bs, match_key] at *
     simp [iav, ibv, spav, spbv]
     repeat apply And.intro
@@ -304,6 +304,5 @@ theorem commonSharedSecret {a b : Agent} {txt : String}
     simp [Kind.rev_rev]
     simp [Kind.rev]
   simp [h₇]
-
 
 end X3DH
