@@ -251,15 +251,9 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   | Except.error s => Except.error s
 
 
--- for all agents A and all KeyPairs K ~> match_key k k.rev
+-- Basic Theorems about the protocol
 
-theorem all_agentIK₁ :
-  ∀ (a : Agent) (k : KeyPair), a.IK = k → match_key k.privateKey k.publicKey := by
-  intro a k h₁
-  have h₂ := k.valid
-  exact h₂
-
-theorem all_agentIK₂ :
+theorem all_agentIK :
   ∀ (a : Agent), match_key a.IK.privateKey a.IK.publicKey := by
   intro a
   let h₁ := a.IK
@@ -267,37 +261,6 @@ theorem all_agentIK₂ :
   let k2 := a.IK.privateKey
   let h₂ := h₁.valid
   exact h₂
-
-theorem all_agentSPK₂ :
-  ∀ (a : Agent), match_key a.SPK.privateKey a.SPK.publicKey := by
-  intro a
-  let h₁ := a.SPK
-  let k1 := a.SPK.publicKey
-  let k2 := a.SPK.privateKey
-  let h₂ := h₁.valid
-  exact h₂
-
-theorem match_bs_append {a1 a2 b1 b2 : ByteSequence} :
-  ∀ (bs1 bs2 : ByteSequence),
-    bs1 = ByteSequence.append a1 a2 →
-    bs2 = ByteSequence.append b1 b2 →
-    match_bs a1 b1 → match_bs a2 b2 → match_bs bs1 bs2 := by
-  intro bs1 bs2 h₁ h₂ h₃ h₄
-  rw [h₁, h₂]
-  simp [match_bs]
-  apply And.intro
-  repeat assumption
-
-theorem match_bs_dh {a1 a2 b1 b2 : Key} :
-  ∀ (bs1 bs2 : ByteSequence),
-    bs1 = ByteSequence.dh a1 a2 →
-    bs2 = ByteSequence.dh b1 b2 →
-    match_key a1 b1 → match_key a2 b2 → match_bs bs1 bs2 := by
-  intro bs1 bs2 h₁ h₂ h₃ h₄
-  rw [h₁, h₂]
-  simp [match_bs]
-  apply And.intro
-  repeat assumption
 
 
 theorem commonSharedSecret {a b : Agent} {txt : String}
@@ -310,40 +273,36 @@ theorem commonSharedSecret {a b : Agent} {txt : String}
     decrypt, encrypt, generateKeyPair,
     ByteSequence.append, makeMessage, verify,
     match_bs] at *
-  have h₂ := all_agentIK₂ b
-  have h₃ := all_agentIK₂ a
-  have h₄ := all_agentSPK₂ b
-  have h₅ := all_agentSPK₂ a
-  simp [h₂, h₃, h₄, h₅, h] at h₁
+  have h₂ := all_agentIK b
+  simp [h₂, h] at h₁
   simp [h₂, h]
   rw [← h₁]
-  simp [match_bs_append, match_bs_dh]
   have h₆ : match_bs
      ((ByteSequence.encode a.IK.publicKey).append (ByteSequence.encode b.IK.publicKey))
      ((ByteSequence.encode a.IK.publicKey).append (ByteSequence.encode b.IK.publicKey)) := by
     simp [match_bs]
   simp [h₆]
-  have h₇ : match_bs
-            (((ByteSequence.dh a.IK.privateKey b.SPK.publicKey).append
-              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.IK.publicKey)).append
-              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.SPK.publicKey))
-            (((ByteSequence.dh a.IK.publicKey b.SPK.privateKey).append
-              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.IK.privateKey)).append
-              (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.SPK.privateKey)) := by
-      simp [match_bs, match_key]
-      have iav := a.IK.valid
-      have ibv := b.IK.valid
-      have spav := a.SPK.valid
-      have spbv := b.SPK.valid
-      simp [match_key] at *
-      simp [iav, ibv, spav, spbv]
-      repeat apply And.intro
-      repeat simp [Kind.rev_rev]
-      repeat apply And.intro
-      simp [Kind.rev]
-      simp [Kind.rev]
-      simp [Kind.rev_rev]
-      simp [Kind.rev]
+  have h₇ :
+    match_bs
+     (((ByteSequence.dh a.IK.privateKey b.SPK.publicKey).append
+       (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.IK.publicKey)).append
+      (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.prv } b.SPK.publicKey))
+     (((ByteSequence.dh a.IK.publicKey b.SPK.privateKey).append
+       (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.IK.privateKey)).append
+      (ByteSequence.dh { userName := a.name, label := "EK", kind := Kind.pub } b.SPK.privateKey)) := by
+    have iav := a.IK.valid
+    have ibv := b.IK.valid
+    have spav := a.SPK.valid
+    have spbv := b.SPK.valid
+    simp [match_bs, match_key] at *
+    simp [iav, ibv, spav, spbv]
+    repeat apply And.intro
+    repeat simp [Kind.rev_rev]
+    repeat apply And.intro
+    simp [Kind.rev, Kind.rev_rev]
+    simp [Kind.rev]
+    simp [Kind.rev_rev]
+    simp [Kind.rev]
   simp [h₇]
 
 
