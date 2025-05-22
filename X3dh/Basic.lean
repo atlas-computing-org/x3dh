@@ -241,6 +241,7 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   | none => Except.error s!"not decrypted"
 
 
+/-
 #eval
   let r := Registry.mk [createAgent "Alice", createAgent "Bob"]
   let alice := r.agents[0]
@@ -249,7 +250,7 @@ def receiveInitMessage  (receiver : Agent) (msg : Message)
   match msg with
   | Except.ok m => receiveInitMessage bob m
   | Except.error s => Except.error s
-
+-/
 
 -- Basic Theorems about the protocol
 

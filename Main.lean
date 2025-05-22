@@ -1,6 +1,7 @@
 -- import X3dh
 
-def hello : String := "World"
+import X3dh
+import Sha1
 
 def main : IO Unit :=
-  IO.println s!"Hello, {hello}!"
+  IO.println s!"Hello!"

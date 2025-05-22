@@ -6,6 +6,12 @@ defaultTargets = ["x3dh"]
 name = "X3dh"
 
 [[lean_lib]]
+name = "Sha1"
+
+[[lean_lib]]
+name = "EAS"
+
+[[lean_lib]]
 name = "Util"
 
 [[lean_exe]]
